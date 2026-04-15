@@ -3,7 +3,9 @@ package info.openrocket.swing.gui.dialogs;
 import java.awt.Color;
 import java.awt.Dialog;
 import java.awt.Dimension;
+import java.awt.Toolkit;
 import java.awt.Window;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.PrintWriter;
@@ -22,6 +24,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextPane;
+import javax.swing.Timer;
 import javax.swing.UIManager;
 
 import com.jogamp.opengl.JoglVersion;
@@ -97,6 +100,21 @@ public class BugReportDialog extends JDialog {
 		panel.add(new JScrollPane(editorPane), "grow, wrap");
 		
 		panel.add(new StyledLabel(trans.get("bugreport.lbl.Theinformation"), -1), "wrap para");
+
+		JButton copy = new JButton("Copy text");
+		copy.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				String plainText = htmlToPlainText(message);
+				Toolkit.getDefaultToolkit().getSystemClipboard()
+						.setContents(new StringSelection(plainText), null);
+				copy.setText("Copied!");
+				Timer resetTimer = new Timer(1200, evt -> copy.setText("Copy text"));
+				resetTimer.setRepeats(false);
+				resetTimer.start();
+			}
+		});
+		panel.add(copy, "right, sizegroup buttons, split 2");
 		
 		////Close button
 		JButton close = new JButton(trans.get("dlg.but.close"));
@@ -106,7 +124,7 @@ public class BugReportDialog extends JDialog {
 				BugReportDialog.this.dispose();
 			}
 		});
-		panel.add(close, "right, sizegroup buttons, split");
+		panel.add(close, "right, sizegroup buttons");
 		
 		this.add(panel);
 		
@@ -291,6 +309,18 @@ public class BugReportDialog extends JDialog {
 	 */
 	private static String unformatHTML(String text) {
 		return text.replace("<", "&lt;").replace(">", "&gt;");
+	}
+
+	private static String htmlToPlainText(String text) {
+		String plain = text;
+		plain = plain.replaceAll("(?i)</p>", "\\n");
+		plain = plain.replaceAll("(?i)<br\\s*/?>", "\\n");
+		plain = plain.replaceAll("(?i)<p[^>]*>", "");
+		plain = plain.replaceAll("<[^>]+>", "");
+		plain = plain.replace("&lt;", "<").replace("&gt;", ">")
+				.replace("&amp;", "&").replace("&quot;", "\"")
+				.replace("&#39;", "'").replace("&nbsp;", " ");
+		return plain;
 	}
 	
 }

@@ -56,6 +56,7 @@ public class SimulationConfigDialog extends JDialog {
 	private final JTabbedPane tabbedPane;
 	private JButton okButton;
 	private JButton cancelButton;
+	private JButton playbackButton;
 	private static final Translator trans = Application.getTranslator();
 	private static final ApplicationPreferences preferences = Application.getPreferences();
 
@@ -187,23 +188,35 @@ public class SimulationConfigDialog extends JDialog {
 						okButton.setText(trans.get("dlg.but.ok"));
 						cancelButton.setText(trans.get("dlg.but.cancel"));
 						cancelButton.setVisible(true);
+						if (playbackButton != null) {
+							playbackButton.setVisible(false);
+						}
 						SimulationConfigDialog.this.revalidate();
 						break;
 					case WARNINGS_IDX:
 						okButton.setText(trans.get("dlg.but.close"));
 						cancelButton.setVisible(false);
+						if (playbackButton != null) {
+							playbackButton.setVisible(false);
+						}
 						SimulationConfigDialog.this.revalidate();
 						break;
 					case PLOT_IDX:
 						okButton.setText(trans.get("SimulationConfigDialog.btn.plot"));
 						cancelButton.setText(trans.get("dlg.but.close"));
 						cancelButton.setVisible(true);
+						if (playbackButton != null) {
+							playbackButton.setVisible(plotTab != null);
+						}
 						SimulationConfigDialog.this.revalidate();
 						break;
 					case EXPORT_IDX:
 						okButton.setText(trans.get("SimulationConfigDialog.btn.export"));
 						cancelButton.setText(trans.get("dlg.but.close"));
 						cancelButton.setVisible(true);
+						if (playbackButton != null) {
+							playbackButton.setVisible(false);
+						}
 						SimulationConfigDialog.this.revalidate();
 						break;
 				}
@@ -377,7 +390,34 @@ public class SimulationConfigDialog extends JDialog {
 				cancelClose();
 			}
 		});
-		bottomPanel.add(this.cancelButton, "split 2, tag ok, pushx, align right");
+		bottomPanel.add(this.cancelButton, "split 3, tag ok, pushx, align right");
+
+		this.playbackButton = new JButton("3D Playback");
+		this.playbackButton.setVisible(false);
+		this.playbackButton.addActionListener(new ActionListener() {
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				copyChangesToAllSims();
+
+				Simulation[] outdatedSims = getOutdatedSimulations();
+				if (outdatedSims.length > 0) {
+					new SimulationRunDialog(SimulationConfigDialog.this.parentWindow, document, outdatedSims).setVisible(true);
+				}
+
+				if (plotTab == null) {
+					return;
+				}
+
+				JDialog playback = plotTab.doPlayback(SimulationConfigDialog.this, document);
+				if (playback != null) {
+					playback.setAlwaysOnTop(true);
+					playback.setVisible(true);
+					playback.toFront();
+					playback.requestFocus();
+				}
+			}
+		});
+		bottomPanel.add(this.playbackButton, "tag ok");
 
 		//// Ok button
 		this.okButton = new JButton(trans.get("dlg.but.ok"));
@@ -417,6 +457,10 @@ public class SimulationConfigDialog extends JDialog {
 			}
 		});
 		bottomPanel.add(this.okButton, "tag ok");
+
+		if (tabbedPane.getSelectedIndex() == PLOT_IDX && plotTab != null) {
+			this.playbackButton.setVisible(true);
+		}
 
 		return bottomPanel;
 	}

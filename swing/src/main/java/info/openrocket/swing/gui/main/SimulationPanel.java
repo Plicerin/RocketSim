@@ -417,7 +417,7 @@ public class SimulationPanel extends JPanel {
 	private void updateMotorState() {
 		Rocket rocket = document.getRocket();
 		boolean newHasValidConfig = rocket != null &&
-				rocket.getIds().stream().anyMatch(rocket::hasMotors);
+				!rocket.getIds().isEmpty();
 
 		if (newHasValidConfig == hasValidConfig) {
 			return;
@@ -425,6 +425,7 @@ public class SimulationPanel extends JPanel {
 
 		hasValidConfig = newHasValidConfig;
 		cardLayout.show(cardPanel, hasValidConfig ? CARD_TABLE : CARD_HELP);
+		newSimulationAction.updateEnabledState();
 	}
 
 	/**
@@ -835,6 +836,7 @@ public class SimulationPanel extends JPanel {
 	}
 
 	public void updateActions() {
+		newSimulationAction.updateEnabledState();
 		editSimulationAction.updateEnabledState();
 		cutSimulationAction.updateEnabledState();
 		copySimulationAction.updateEnabledState();

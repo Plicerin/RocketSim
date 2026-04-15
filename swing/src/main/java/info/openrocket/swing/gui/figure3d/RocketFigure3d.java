@@ -83,6 +83,7 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 	
 	private final OpenRocketDocument document;
 	private final Rocket rkt;
+	private final boolean preferFboCanvas;
 	private Component canvas;
 	
 	
@@ -96,6 +97,31 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 	
 	private double roll = 0;
 	private double yaw = 0;
+	private double viewDistanceScale = 1.0;
+	private double modelYaw = 0;
+	private double modelPitch = 0;
+	private double modelRoll = 0;
+	private double modelOffsetX = 0;
+	private double modelOffsetY = 0;
+	private double modelOffsetZ = 0;
+	private double sceneTargetX = 0;
+	private double sceneTargetY = 0;
+	private double sceneTargetZ = 0;
+	private boolean sceneViewEnabled = false;
+	private boolean useCameraLookAt = false;
+	private double cameraEyeX = 0;
+	private double cameraEyeY = 0;
+	private double cameraEyeZ = 0;
+	private double cameraTargetX = 0;
+	private double cameraTargetY = 0;
+	private double cameraTargetZ = 0;
+	private double[] trailX = new double[0];
+	private double[] trailY = new double[0];
+	private double[] trailZ = new double[0];
+	private int visibleTrailSamples = 0;
+	private boolean recoverySystemVisible = false;
+	private double recoveryLineLength = 0.0;
+	private double recoveryCanopyRadius = 0.0;
 	
 	Point pickPoint = null;
 	MouseEvent pickEvent;
@@ -112,8 +138,13 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 	}
 
 	public RocketFigure3d(final OpenRocketDocument document) {
+		this(document, false);
+	}
+
+	public RocketFigure3d(final OpenRocketDocument document, final boolean preferFboCanvas) {
 		this.document = document;
 		this.rkt = document.getRocket();
+		this.preferFboCanvas = preferFboCanvas;
 		this.setLayout(new BorderLayout());
 		
 		//Only initialize GL if 3d is enabled.
@@ -202,7 +233,7 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 				log.trace("GL - Not enabling AA by user pref");
 			}
 			
-			if (Application.getPreferences().getBoolean(ApplicationPreferences.OPENGL_USE_FBO, false)) {
+			if (preferFboCanvas || Application.getPreferences().getBoolean(ApplicationPreferences.OPENGL_USE_FBO, false)) {
 				log.trace("GL - Creating GLJPanel");
 				canvas = new GLJPanel(caps);
 			} else {
@@ -342,9 +373,12 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		gl.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT);
 		
 		setupView(gl, glu);
+		drawSceneEnvironment(gl);
 		
 		final FlightConfiguration configuration = rkt.getSelectedConfiguration();
 		if (pickPoint != null) {
+			gl.glPushMatrix();
+			applyRocketTransform(gl);
 			gl.glDisable(GL.GL_MULTISAMPLE);
 			gl.glDisable(GLLightingFunc.GL_LIGHTING);
 			
@@ -366,17 +400,23 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 				
 			}
 			pickPoint = null;
+			gl.glPopMatrix();
 
 			gl.glClearColor(bgColor.getRed()/ 255.0f, bgColor.getGreen()/ 255.0f,
 					bgColor.getBlue()/ 255.0f, bgColor.getAlpha()/ 255.0f);
 			gl.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT);
+			setupView(gl, glu);
+			drawSceneEnvironment(gl);
 
 			gl.glEnable(GL.GL_MULTISAMPLE);
 			gl.glEnable(GLLightingFunc.GL_LIGHTING);
 
 			updateFigure();
 		}
+		gl.glPushMatrix();
+		applyRocketTransform(gl);
 		rr.render(drawable, configuration, selection);
+		gl.glPopMatrix();
 		
 		drawExtras(drawable, gl, glu);
 		if (drawCarets) {
@@ -569,7 +609,7 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		gl.glViewport(0, 0, w, h);
 		gl.glMatrixMode(GLMatrixFunc.GL_PROJECTION);
 		gl.glLoadIdentity();
-		glu.gluPerspective(fovY, ratio, 0.1f, 50.0f);
+		glu.gluPerspective(fovY, ratio, 0.12f, 2500.0f);
 		gl.glMatrixMode(GLMatrixFunc.GL_MODELVIEW);
 		
 		redrawExtras = true;
@@ -610,13 +650,16 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 				/ Math.tan(Math.toRadians(fovY / 2.0));
 		
 		// Move back the greater of the 2 distances
-		glu.gluLookAt(0, 0, Math.max(dX, dY), 0, 0, 0, 0, 1, 0);
-		
-		gl.glRotated(yaw * (180.0 / Math.PI), 0, 1, 0);
-		gl.glRotated(roll * (180.0 / Math.PI), 1, 0, 0);
-		
-		// Center the rocket in the view.
-		gl.glTranslated(-b.min.getX() - b.span().getX() / 2.0, 0, 0);
+		if (useCameraLookAt) {
+			glu.gluLookAt(cameraEyeX, cameraEyeY, cameraEyeZ,
+					cameraTargetX, cameraTargetY, cameraTargetZ,
+					0, 1, 0);
+		} else {
+			glu.gluLookAt(0, 0, Math.max(dX, dY) * viewDistanceScale, 0, 0, 0, 0, 1, 0);
+			gl.glRotated(yaw * (180.0 / Math.PI), 0, 1, 0);
+			gl.glRotated(roll * (180.0 / Math.PI), 1, 0, 0);
+			gl.glTranslated(-sceneTargetX, -sceneTargetY, -sceneTargetZ);
+		}
 		
 		//Change to LEFT Handed coordinates
 		gl.glScaled(1, 1, -1);
@@ -628,6 +671,257 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		gl.glScaled(-1, 1, 1);
 		gl.glTranslated(-1, 0, 0);
 		gl.glMatrixMode(GLMatrixFunc.GL_MODELVIEW);
+	}
+
+	private void applyRocketTransform(final GL2 gl) {
+		final BoundingBox b = calculateBounds();
+
+		gl.glTranslated(modelOffsetX, modelOffsetY, modelOffsetZ);
+		gl.glRotated(modelYaw * (180.0 / Math.PI), 0, 1, 0);
+		gl.glRotated(modelPitch * (180.0 / Math.PI), 0, 0, 1);
+		gl.glRotated(modelRoll * (180.0 / Math.PI), 1, 0, 0);
+		gl.glTranslated(-b.min.getX() - b.span().getX() / 2.0, 0, 0);
+	}
+
+	private void drawSceneEnvironment(final GL2 gl) {
+		if (!sceneViewEnabled) {
+			return;
+		}
+
+		gl.glPushAttrib(GL2.GL_ENABLE_BIT | GL2.GL_CURRENT_BIT | GL2.GL_LIGHTING_BIT | GL2.GL_LINE_BIT);
+		try {
+			gl.glDisable(GLLightingFunc.GL_LIGHTING);
+			gl.glDisable(GL.GL_CULL_FACE);
+			gl.glLineWidth(1.0f);
+
+			drawGroundPlane(gl);
+			drawLaunchPad(gl);
+			drawBackgroundStructures(gl);
+			drawFlightTrail(gl);
+			drawRecoverySystem(gl);
+		} finally {
+			gl.glPopAttrib();
+		}
+	}
+
+	private void drawFlightTrail(final GL2 gl) {
+		if (visibleTrailSamples < 2 || trailX.length == 0) {
+			return;
+		}
+
+		// Compute current nozzle world position so the trail connects to the nozzle,
+		// not to the model's geometric center (which is at modelOffset and is ~span/2
+		// ahead of the nozzle in the direction of travel).
+		final BoundingBox tb = calculateBounds();
+		final double halfSpan = (tb != null) ? tb.span().getX() / 2.0 : 0.0;
+		// Nozzle is at (+halfSpan, 0, 0) in centred model space. Apply pitch then yaw.
+		// R_pitch (around Z by modelPitch): (halfSpan, 0) -> (halfSpan*cos, halfSpan*sin)
+		// R_yaw   (around Y by modelYaw):   x_yaw = x_p*cos(yaw), z_yaw = -x_p*sin(yaw)
+		final double cosPitch = Math.cos(modelPitch);
+		final double sinPitch = Math.sin(modelPitch);
+		final double cosYaw   = Math.cos(modelYaw);
+		final double sinYaw   = Math.sin(modelYaw);
+		final double xPitch = halfSpan * cosPitch;
+		final double yPitch = halfSpan * sinPitch;
+		final double nozzleX = modelOffsetX + xPitch * cosYaw;
+		final double nozzleY = modelOffsetY + yPitch;
+		final double nozzleZ = modelOffsetZ - xPitch * sinYaw;
+
+		gl.glColor3f(0.93f, 0.95f, 0.98f);
+		gl.glLineWidth(3.5f);
+		gl.glBegin(GL2.GL_LINE_STRIP);
+		for (int i = 0; i < visibleTrailSamples && i < trailX.length; i++) {
+			gl.glVertex3d(trailX[i], Math.max(0.05, trailY[i]), trailZ[i]);
+		}
+		// Bridge from last history sample to current interpolated CG position, then to nozzle.
+		// This closes the gap between the last discrete sim sample and the current frame.
+		gl.glVertex3d(modelOffsetX, modelOffsetY, modelOffsetZ);
+		gl.glVertex3d(nozzleX, nozzleY, nozzleZ);
+		gl.glEnd();
+	}
+
+	private void drawRecoverySystem(final GL2 gl) {
+		if (!recoverySystemVisible || recoveryCanopyRadius <= 0.0 || recoveryLineLength <= 0.0) {
+			return;
+		}
+
+		double canopyY = modelOffsetY + recoveryLineLength;
+		gl.glColor3f(0.96f, 0.96f, 0.98f);
+		gl.glLineWidth(1.5f);
+		gl.glBegin(GL2.GL_LINES);
+		gl.glVertex3d(modelOffsetX, modelOffsetY, modelOffsetZ);
+		gl.glVertex3d(modelOffsetX, canopyY, modelOffsetZ);
+		gl.glEnd();
+
+		gl.glBegin(GL2.GL_LINE_LOOP);
+		for (int i = 0; i < 20; i++) {
+			double angle = (Math.PI * 2.0 * i) / 20.0;
+			gl.glVertex3d(modelOffsetX + Math.cos(angle) * recoveryCanopyRadius,
+					canopyY,
+					modelOffsetZ + Math.sin(angle) * recoveryCanopyRadius);
+		}
+		gl.glEnd();
+	}
+
+	private void drawGroundPlane(final GL2 gl) {
+		final float halfSize = 180.0f;
+		gl.glColor3f(0.31f, 0.39f, 0.25f);
+		gl.glBegin(GL2.GL_QUADS);
+		gl.glVertex3d(-halfSize, 0.0, -halfSize);
+		gl.glVertex3d(halfSize, 0.0, -halfSize);
+		gl.glVertex3d(halfSize, 0.0, halfSize);
+		gl.glVertex3d(-halfSize, 0.0, halfSize);
+		gl.glEnd();
+
+		gl.glColor3f(0.42f, 0.50f, 0.34f);
+		gl.glBegin(GL2.GL_LINES);
+		for (int i = -180; i <= 180; i += 10) {
+			gl.glVertex3d(i, 0.02, -halfSize);
+			gl.glVertex3d(i, 0.02, halfSize);
+			gl.glVertex3d(-halfSize, 0.02, i);
+			gl.glVertex3d(halfSize, 0.02, i);
+		}
+		gl.glEnd();
+	}
+
+	private void drawLaunchPad(final GL2 gl) {
+		gl.glColor3f(0.25f, 0.25f, 0.28f);
+		gl.glBegin(GL2.GL_QUADS);
+		gl.glVertex3d(-0.9, 0.0, -0.9);
+		gl.glVertex3d(0.9, 0.0, -0.9);
+		gl.glVertex3d(0.9, 0.0, 0.9);
+		gl.glVertex3d(-0.9, 0.0, 0.9);
+		gl.glEnd();
+
+		gl.glColor3f(0.72f, 0.72f, 0.74f);
+		gl.glLineWidth(2.0f);
+		gl.glBegin(GL2.GL_LINES);
+		gl.glVertex3d(0.0, 0.0, 0.0);
+		gl.glVertex3d(0.0, 2.0, 0.0);
+		gl.glEnd();
+	}
+
+	private void drawBackgroundStructures(final GL2 gl) {
+		// Buildings
+		drawSimpleBlock(gl, 18.0, 0.0, -24.0, 7.0, 5.0, 6.0, 0.75f, 0.72f, 0.67f);
+		drawSimpleBlock(gl, 30.0, 0.0, -28.0, 9.0, 7.0, 7.0, 0.73f, 0.78f, 0.84f);
+		drawSimpleBlock(gl, -26.0, 0.0, -22.0, 8.0, 6.0, 7.0, 0.76f, 0.70f, 0.64f);
+		drawSimpleBlock(gl, -40.0, 0.0, -35.0, 14.0, 10.0, 10.0, 0.68f, 0.71f, 0.76f);
+		drawSimpleBlock(gl, 55.0, 0.0, -10.0, 12.0, 4.0, 10.0, 0.70f, 0.68f, 0.62f);
+		drawSimpleBlock(gl, -55.0, 0.0, -40.0, 8.0, 3.5, 8.0, 0.72f, 0.74f, 0.68f);
+		drawSimpleBlock(gl, 12.0, 0.0, 22.0, 6.0, 4.0, 5.0, 0.74f, 0.70f, 0.65f);
+		// Safety fence around launch pad
+		drawFence(gl);
+		// Tree clusters
+		drawTree(gl, -12.0, -8.0, 5.0);
+		drawTree(gl, -14.0, -9.0, 4.5);
+		drawTree(gl, -10.5, -7.5, 5.2);
+		drawTree(gl, 14.0, 10.0, 5.0);
+		drawTree(gl, 16.0, 11.0, 4.8);
+		drawTree(gl, -35.0, -15.0, 6.0);
+		drawTree(gl, -37.0, -14.0, 5.5);
+		drawTree(gl, -33.0, -16.0, 5.8);
+		drawTree(gl, 40.0, -18.0, 6.5);
+		drawTree(gl, 42.0, -20.0, 5.5);
+		drawTree(gl, 44.0, -17.0, 6.0);
+		drawTree(gl, -50.0, 25.0, 7.0);
+		drawTree(gl, -48.0, 26.0, 6.5);
+		drawTree(gl, -52.0, 24.0, 6.8);
+	}
+
+	private void drawFence(final GL2 gl) {
+		gl.glColor3f(0.82f, 0.80f, 0.73f);
+		gl.glLineWidth(1.0f);
+		gl.glBegin(GL2.GL_LINE_LOOP);
+		gl.glVertex3d(-4.5, 0.0, -4.5);
+		gl.glVertex3d( 4.5, 0.0, -4.5);
+		gl.glVertex3d( 4.5, 0.0,  4.5);
+		gl.glVertex3d(-4.5, 0.0,  4.5);
+		gl.glEnd();
+		gl.glBegin(GL2.GL_LINE_LOOP);
+		gl.glVertex3d(-4.5, 1.2, -4.5);
+		gl.glVertex3d( 4.5, 1.2, -4.5);
+		gl.glVertex3d( 4.5, 1.2,  4.5);
+		gl.glVertex3d(-4.5, 1.2,  4.5);
+		gl.glEnd();
+		gl.glBegin(GL2.GL_LINES);
+		for (double p = -4.5; p <= 4.5; p += 1.5) {
+			gl.glVertex3d(p, 0.0, -4.5); gl.glVertex3d(p, 1.2, -4.5);
+			gl.glVertex3d(p, 0.0,  4.5); gl.glVertex3d(p, 1.2,  4.5);
+			gl.glVertex3d(-4.5, 0.0, p); gl.glVertex3d(-4.5, 1.2, p);
+			gl.glVertex3d( 4.5, 0.0, p); gl.glVertex3d( 4.5, 1.2, p);
+		}
+		gl.glEnd();
+	}
+
+	private void drawTree(final GL2 gl, final double cx, final double cz, final double height) {
+		final double trunkH = height * 0.35;
+		final double crownH = height * 0.65;
+		final double crownR = height * 0.22;
+		final int segs = 8;
+		// Trunk
+		gl.glColor3f(0.42f, 0.30f, 0.20f);
+		gl.glBegin(GL2.GL_QUADS);
+		for (int i = 0; i < segs; i++) {
+			double a0 = Math.PI * 2.0 * i / segs;
+			double a1 = Math.PI * 2.0 * (i + 1) / segs;
+			double r = 0.12;
+			gl.glVertex3d(cx + Math.cos(a0) * r, 0.0,   cz + Math.sin(a0) * r);
+			gl.glVertex3d(cx + Math.cos(a1) * r, 0.0,   cz + Math.sin(a1) * r);
+			gl.glVertex3d(cx + Math.cos(a1) * r, trunkH, cz + Math.sin(a1) * r);
+			gl.glVertex3d(cx + Math.cos(a0) * r, trunkH, cz + Math.sin(a0) * r);
+		}
+		gl.glEnd();
+		// Crown (cone)
+		gl.glColor3f(0.23f, 0.42f, 0.20f);
+		gl.glBegin(GL2.GL_TRIANGLES);
+		for (int i = 0; i < segs; i++) {
+			double a0 = Math.PI * 2.0 * i / segs;
+			double a1 = Math.PI * 2.0 * (i + 1) / segs;
+			gl.glVertex3d(cx, trunkH + crownH, cz);
+			gl.glVertex3d(cx + Math.cos(a1) * crownR, trunkH, cz + Math.sin(a1) * crownR);
+			gl.glVertex3d(cx + Math.cos(a0) * crownR, trunkH, cz + Math.sin(a0) * crownR);
+		}
+		gl.glEnd();
+	}
+
+	private void drawSimpleBlock(final GL2 gl, final double cx, final double cy, final double cz,
+			final double sx, final double sy, final double sz,
+			final float r, final float g, final float b) {
+		final double x0 = cx - sx / 2.0;
+		final double x1 = cx + sx / 2.0;
+		final double y0 = cy;
+		final double y1 = cy + sy;
+		final double z0 = cz - sz / 2.0;
+		final double z1 = cz + sz / 2.0;
+
+		gl.glColor3f(r, g, b);
+		gl.glBegin(GL2.GL_QUADS);
+		gl.glVertex3d(x0, y0, z0);
+		gl.glVertex3d(x1, y0, z0);
+		gl.glVertex3d(x1, y1, z0);
+		gl.glVertex3d(x0, y1, z0);
+
+		gl.glVertex3d(x1, y0, z1);
+		gl.glVertex3d(x0, y0, z1);
+		gl.glVertex3d(x0, y1, z1);
+		gl.glVertex3d(x1, y1, z1);
+
+		gl.glVertex3d(x0, y0, z1);
+		gl.glVertex3d(x0, y0, z0);
+		gl.glVertex3d(x0, y1, z0);
+		gl.glVertex3d(x0, y1, z1);
+
+		gl.glVertex3d(x1, y0, z0);
+		gl.glVertex3d(x1, y0, z1);
+		gl.glVertex3d(x1, y1, z1);
+		gl.glVertex3d(x1, y1, z0);
+
+		gl.glVertex3d(x0, y1, z0);
+		gl.glVertex3d(x1, y1, z0);
+		gl.glVertex3d(x1, y1, z1);
+		gl.glVertex3d(x0, y1, z1);
+		gl.glEnd();
 	}
 	
 	/**
@@ -682,6 +976,246 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 			return;
 		this.yaw = MathUtil.reduce2Pi(rot);
 		internalRepaint();
+	}
+
+	/**
+	 * Set camera view angles programmatically.
+	 *
+	 * @param yawRadians yaw angle in radians
+	 * @param rollRadians pitch angle in radians
+	 */
+	public void setViewAngles(final double yawRadians, final double rollRadians) {
+		setViewState(yawRadians, rollRadians, viewDistanceScale);
+	}
+
+	/**
+	 * Set camera view state programmatically.
+	 *
+	 * @param yawRadians yaw angle in radians
+	 * @param rollRadians pitch angle in radians
+	 * @param distanceScale scale factor applied to the default camera distance
+	 */
+	public void setViewState(final double yawRadians, final double rollRadians, final double distanceScale) {
+		final double normalizedYaw = MathUtil.reduce2Pi(yawRadians);
+		final double normalizedRoll = MathUtil.reduce2Pi(rollRadians);
+		final double clampedDistanceScale = MathUtil.clamp(distanceScale, 0.35, 4.0);
+
+		if (MathUtil.equals(yaw, normalizedYaw) &&
+				MathUtil.equals(roll, normalizedRoll) &&
+				MathUtil.equals(viewDistanceScale, clampedDistanceScale)) {
+			return;
+		}
+
+		yaw = normalizedYaw;
+		roll = normalizedRoll;
+		viewDistanceScale = clampedDistanceScale;
+		internalRepaint();
+	}
+
+	/**
+	 * Set rocket model orientation programmatically for playback.
+	 *
+	 * @param yawRadians heading rotation around vertical axis
+	 * @param pitchRadians elevation rotation of the rocket body
+	 * @param rollRadians bank rotation around rocket longitudinal axis
+	 */
+	public void setModelPose(final double yawRadians, final double pitchRadians, final double rollRadians) {
+		final double normalizedYaw = Double.isNaN(yawRadians) ? 0.0 : MathUtil.reduce2Pi(yawRadians);
+		final double normalizedPitch = Double.isNaN(pitchRadians) ? 0.0 : MathUtil.reducePi(pitchRadians);
+		final double normalizedRoll = Double.isNaN(rollRadians) ? 0.0 : MathUtil.reduce2Pi(rollRadians);
+
+		if (MathUtil.equals(modelYaw, normalizedYaw) &&
+				MathUtil.equals(modelPitch, normalizedPitch) &&
+				MathUtil.equals(modelRoll, normalizedRoll)) {
+			return;
+		}
+
+		modelYaw = normalizedYaw;
+		modelPitch = normalizedPitch;
+		modelRoll = normalizedRoll;
+		internalRepaint();
+	}
+
+	public void setSceneViewEnabled(final boolean enabled) {
+		if (sceneViewEnabled == enabled) {
+			return;
+		}
+		sceneViewEnabled = enabled;
+		internalRepaint();
+	}
+
+	public void setSceneCameraTarget(final double targetX, final double targetY, final double targetZ) {
+		if (MathUtil.equals(sceneTargetX, targetX) &&
+				MathUtil.equals(sceneTargetY, targetY) &&
+				MathUtil.equals(sceneTargetZ, targetZ)) {
+			return;
+		}
+
+		sceneTargetX = targetX;
+		sceneTargetY = targetY;
+		sceneTargetZ = targetZ;
+		internalRepaint();
+	}
+
+	public void setModelPosition(final double x, final double y, final double z) {
+		if (MathUtil.equals(modelOffsetX, x) &&
+				MathUtil.equals(modelOffsetY, y) &&
+				MathUtil.equals(modelOffsetZ, z)) {
+			return;
+		}
+
+		modelOffsetX = x;
+		modelOffsetY = y;
+		modelOffsetZ = z;
+		internalRepaint();
+	}
+
+	public void setCameraLookAt(final double eyeX, final double eyeY, final double eyeZ,
+			final double targetX, final double targetY, final double targetZ) {
+		if (useCameraLookAt &&
+				MathUtil.equals(cameraEyeX, eyeX) &&
+				MathUtil.equals(cameraEyeY, eyeY) &&
+				MathUtil.equals(cameraEyeZ, eyeZ) &&
+				MathUtil.equals(cameraTargetX, targetX) &&
+				MathUtil.equals(cameraTargetY, targetY) &&
+				MathUtil.equals(cameraTargetZ, targetZ)) {
+			return;
+		}
+
+		useCameraLookAt = true;
+		cameraEyeX = eyeX;
+		cameraEyeY = eyeY;
+		cameraEyeZ = eyeZ;
+		cameraTargetX = targetX;
+		cameraTargetY = targetY;
+		cameraTargetZ = targetZ;
+		internalRepaint();
+	}
+
+	public void clearCameraLookAt() {
+		if (!useCameraLookAt) {
+			return;
+		}
+		useCameraLookAt = false;
+		internalRepaint();
+	}
+
+	public void setFlightTrail(final double[] xs, final double[] ys, final double[] zs) {
+		trailX = xs != null ? xs.clone() : new double[0];
+		trailY = ys != null ? ys.clone() : new double[0];
+		trailZ = zs != null ? zs.clone() : new double[0];
+		visibleTrailSamples = Math.min(trailX.length, Math.min(trailY.length, trailZ.length));
+		internalRepaint();
+	}
+
+	public void setVisibleTrailSamples(final int count) {
+		int clamped = Math.max(0, Math.min(count, Math.min(trailX.length, Math.min(trailY.length, trailZ.length))));
+		if (visibleTrailSamples == clamped) {
+			return;
+		}
+		visibleTrailSamples = clamped;
+		internalRepaint();
+	}
+
+	public void setRecoverySystemState(final boolean visible, final double lineLength, final double canopyRadius) {
+		if (recoverySystemVisible == visible &&
+				MathUtil.equals(recoveryLineLength, lineLength) &&
+				MathUtil.equals(recoveryCanopyRadius, canopyRadius)) {
+			return;
+		}
+
+		recoverySystemVisible = visible;
+		recoveryLineLength = lineLength;
+		recoveryCanopyRadius = canopyRadius;
+		internalRepaint();
+	}
+
+	/**
+	 * Apply all playback-visible state with a single repaint to avoid stutter from
+	 * multiple immediate GL redraws in one timer tick.
+	 */
+	public void setPlaybackFrame(final double sceneTargetX, final double sceneTargetY, final double sceneTargetZ,
+					 final double modelX, final double modelY, final double modelZ,
+					 final double yawRadians, final double pitchRadians, final double rollRadians,
+					 final int trailSampleCount,
+					 final boolean recoveryVisible, final double recoveryLineLength, final double recoveryCanopyRadius,
+					 final boolean useLookAt,
+					 final double eyeX, final double eyeY, final double eyeZ,
+					 final double targetX, final double targetY, final double targetZ) {
+		final double normalizedYaw = Double.isNaN(yawRadians) ? 0.0 : MathUtil.reduce2Pi(yawRadians);
+		final double normalizedPitch = Double.isNaN(pitchRadians) ? 0.0 : MathUtil.reducePi(pitchRadians);
+		final double normalizedRoll = Double.isNaN(rollRadians) ? 0.0 : MathUtil.reduce2Pi(rollRadians);
+		final int clampedTrailSamples = Math.max(0,
+				Math.min(trailSampleCount, Math.min(trailX.length, Math.min(trailY.length, trailZ.length))));
+
+		boolean changed = false;
+
+		if (!MathUtil.equals(this.sceneTargetX, sceneTargetX) ||
+				!MathUtil.equals(this.sceneTargetY, sceneTargetY) ||
+				!MathUtil.equals(this.sceneTargetZ, sceneTargetZ)) {
+			this.sceneTargetX = sceneTargetX;
+			this.sceneTargetY = sceneTargetY;
+			this.sceneTargetZ = sceneTargetZ;
+			changed = true;
+		}
+
+		if (!MathUtil.equals(this.modelOffsetX, modelX) ||
+				!MathUtil.equals(this.modelOffsetY, modelY) ||
+				!MathUtil.equals(this.modelOffsetZ, modelZ)) {
+			this.modelOffsetX = modelX;
+			this.modelOffsetY = modelY;
+			this.modelOffsetZ = modelZ;
+			changed = true;
+		}
+
+		if (!MathUtil.equals(this.modelYaw, normalizedYaw) ||
+				!MathUtil.equals(this.modelPitch, normalizedPitch) ||
+				!MathUtil.equals(this.modelRoll, normalizedRoll)) {
+			this.modelYaw = normalizedYaw;
+			this.modelPitch = normalizedPitch;
+			this.modelRoll = normalizedRoll;
+			changed = true;
+		}
+
+		if (this.visibleTrailSamples != clampedTrailSamples) {
+			this.visibleTrailSamples = clampedTrailSamples;
+			changed = true;
+		}
+
+		if (this.recoverySystemVisible != recoveryVisible ||
+				!MathUtil.equals(this.recoveryLineLength, recoveryLineLength) ||
+				!MathUtil.equals(this.recoveryCanopyRadius, recoveryCanopyRadius)) {
+			this.recoverySystemVisible = recoveryVisible;
+			this.recoveryLineLength = recoveryLineLength;
+			this.recoveryCanopyRadius = recoveryCanopyRadius;
+			changed = true;
+		}
+
+		if (this.useCameraLookAt != useLookAt) {
+			this.useCameraLookAt = useLookAt;
+			changed = true;
+		}
+
+		if (useLookAt) {
+			if (!MathUtil.equals(this.cameraEyeX, eyeX) ||
+					!MathUtil.equals(this.cameraEyeY, eyeY) ||
+					!MathUtil.equals(this.cameraEyeZ, eyeZ) ||
+					!MathUtil.equals(this.cameraTargetX, targetX) ||
+					!MathUtil.equals(this.cameraTargetY, targetY) ||
+					!MathUtil.equals(this.cameraTargetZ, targetZ)) {
+				this.cameraEyeX = eyeX;
+				this.cameraEyeY = eyeY;
+				this.cameraEyeZ = eyeZ;
+				this.cameraTargetX = targetX;
+				this.cameraTargetY = targetY;
+				this.cameraTargetZ = targetZ;
+				changed = true;
+			}
+		}
+
+		if (changed) {
+			internalRepaint();
+		}
 	}
 	
 	// ///////////// Extra methods

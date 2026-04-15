@@ -15,10 +15,14 @@ import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.ToolTipManager;
 
+import info.openrocket.core.document.OpenRocketDocument;
+import info.openrocket.core.document.OpenRocketDocumentFactory;
+import info.openrocket.core.document.Simulation;
 import info.openrocket.core.l10n.Translator;
 import info.openrocket.core.plugin.JarMigrationHelper;
 import info.openrocket.core.plugin.PluginHelper;
 import info.openrocket.core.preferences.ApplicationPreferences;
+import info.openrocket.core.simulation.exception.SimulationException;
 import info.openrocket.core.startup.Application;
 import net.miginfocom.layout.LayoutUtil;
 import info.openrocket.core.arch.SystemInfo;
@@ -33,6 +37,7 @@ import info.openrocket.swing.gui.dialogs.WelcomeDialog;
 import info.openrocket.swing.gui.main.BasicFrame;
 import info.openrocket.swing.gui.main.Splash;
 import info.openrocket.swing.gui.main.SwingExceptionHandler;
+import info.openrocket.swing.gui.simulation.FlightPlaybackDialog;
 import info.openrocket.swing.gui.util.GUIUtil;
 import info.openrocket.swing.gui.util.SwingPreferences;
 import info.openrocket.swing.gui.theme.UITheme;
@@ -57,6 +62,8 @@ import static info.openrocket.core.file.rasaero.export.BodyTubeDTOAdapter.trans;
  */
 public class SwingStartup {
 	private final static Logger log = LoggerFactory.getLogger(SwingStartup.class);
+		private static final String ARG_PLAYBACK_ONLY = "--playback-only";
+		private static final String ARG_PLAYBACK_CAPTURE = "--playback-capture";
 	
 	/**
 	 * OpenRocket startup main method.
@@ -370,6 +377,22 @@ public class SwingStartup {
 	 * 				performed as a result.
 	 */
 	private boolean handleCommandLine(String[] args) {
+		boolean playbackOnly = "1".equals(System.getenv("OPENROCKET_PLAYBACK_ONLY")) ||
+				Boolean.getBoolean("openrocket.playbackOnly");
+		boolean playbackCapture = "1".equals(System.getenv("OPENROCKET_PLAYBACK_CAPTURE")) ||
+				Boolean.getBoolean("openrocket.playbackCapture");
+		for (String arg : args) {
+			if (ARG_PLAYBACK_ONLY.equals(arg)) {
+				playbackOnly = true;
+			}
+			if (ARG_PLAYBACK_CAPTURE.equals(arg)) {
+				playbackCapture = true;
+			}
+		}
+
+		if (playbackOnly) {
+			return launchPlaybackOnly(playbackCapture);
+		}
 		
 		// Check command-line for files
 		boolean opened = false;
@@ -379,6 +402,35 @@ public class SwingStartup {
 			}
 		}
 		return opened;
+	}
+
+	private boolean launchPlaybackOnly(boolean playbackCapture) {
+		OpenRocketDocument document = OpenRocketDocumentFactory.createNewRocket();
+		Simulation simulation;
+		if (document.getSimulationCount() > 0) {
+			simulation = document.getSimulation(0);
+		} else {
+			simulation = new Simulation(document, document.getRocket());
+			simulation.setName(document.getNextSimulationName());
+			document.addSimulation(simulation);
+		}
+
+		try {
+			simulation.simulate();
+		} catch (SimulationException ex) {
+			log.error("Playback-only simulation failed", ex);
+			JOptionPane.showMessageDialog(null,
+					"Unable to generate default simulation for playback: " + ex.getMessage(),
+					"Playback startup error",
+					JOptionPane.ERROR_MESSAGE);
+			return false;
+		}
+
+		FlightPlaybackDialog dialog = new FlightPlaybackDialog(null, document, simulation);
+		dialog.setAutoCaptureEnabled(playbackCapture);
+		dialog.setVisible(true);
+		dialog.startAutoPlayback();
+		return true;
 	}
 	
 }

@@ -26,6 +26,7 @@ import javax.swing.table.TableColumn;
 import javax.swing.table.TableColumnModel;
 
 import info.openrocket.core.document.Simulation;
+import info.openrocket.core.document.OpenRocketDocument;
 import info.openrocket.core.l10n.Translator;
 import info.openrocket.core.simulation.FlightDataBranch;
 import info.openrocket.core.simulation.FlightDataType;
@@ -274,6 +275,17 @@ public class SimulationPlotPanel extends PlotPanel<FlightDataType, FlightDataBra
 		}
 		setDefaultConfiguration(configuration.clone());
 		return SimulationPlotDialog.getPlot(parent, simulation, configuration);
+	}
+
+	public JDialog doPlayback(Window parent, OpenRocketDocument document) {
+		if (simulation.getSimulatedData() == null || simulation.getSimulatedData().getBranchCount() == 0) {
+			JOptionPane.showMessageDialog(SimulationPlotPanel.this,
+					"No simulation data available for 3D playback.",
+					trans.get("error.noPlotSelected.title"),
+					JOptionPane.ERROR_MESSAGE);
+			return null;
+		}
+		return new FlightPlaybackDialog(parent, document, simulation);
 	}
 
 	@Override
