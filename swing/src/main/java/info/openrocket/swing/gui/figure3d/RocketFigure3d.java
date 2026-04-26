@@ -745,6 +745,7 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 			return;
 		}
 
+		// Enable depth test so parachute renders behind solid rocket geometry		gl.glEnable(GL.GL_DEPTH_TEST);		gl.glDepthMask(true);
 		double canopyY = modelOffsetY + recoveryLineLength;
 		gl.glColor3f(0.96f, 0.96f, 0.98f);
 		gl.glLineWidth(1.5f);
