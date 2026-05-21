@@ -718,7 +718,9 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 			drawGroundPlane(gl);
 			drawLaunchPad(gl);
 			drawBackgroundStructures(gl);
-			drawFlightTrail(gl);
+			if (tracerVisible) {
+				drawFlightTrail(gl);
+			}
 			drawRecoverySystem(gl);
 		} finally {
 			gl.glPopAttrib();
