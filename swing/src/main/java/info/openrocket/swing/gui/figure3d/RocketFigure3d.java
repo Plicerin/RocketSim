@@ -745,23 +745,65 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 			return;
 		}
 
-		// Enable depth test so parachute renders behind solid rocket geometry		gl.glEnable(GL.GL_DEPTH_TEST);		gl.glDepthMask(true);
-		double canopyY = modelOffsetY + recoveryLineLength;
+		// Enable depth test so parachute renders behind solid rocket geometry
+		gl.glEnable(GL.GL_DEPTH_TEST);
+		gl.glDepthMask(true);
+
+		final double R = recoveryCanopyRadius;
+		final int gores = 8;
+		final int latBands = 10;
+
+		// Attachment point (nose)
+		final double attachX = modelOffsetX;
+		final double attachY = modelOffsetY;
+		final double attachZ = modelOffsetZ;
+
+		// Skirt ring (bottom of canopy)
+		final double skirtY = attachY + recoveryLineLength;
+
+		// --- Shroud lines (white) ---
 		gl.glColor3f(0.96f, 0.96f, 0.98f);
 		gl.glLineWidth(1.5f);
 		gl.glBegin(GL2.GL_LINES);
-		gl.glVertex3d(modelOffsetX, modelOffsetY, modelOffsetZ);
-		gl.glVertex3d(modelOffsetX, canopyY, modelOffsetZ);
-		gl.glEnd();
-
-		gl.glBegin(GL2.GL_LINE_LOOP);
-		for (int i = 0; i < 20; i++) {
-			double angle = (Math.PI * 2.0 * i) / 20.0;
-			gl.glVertex3d(modelOffsetX + Math.cos(angle) * recoveryCanopyRadius,
-					canopyY,
-					modelOffsetZ + Math.sin(angle) * recoveryCanopyRadius);
+		for (int i = 0; i < gores; i++) {
+			double angle = (2.0 * Math.PI * i) / gores;
+			gl.glVertex3d(attachX, attachY, attachZ);
+			gl.glVertex3d(attachX + Math.cos(angle) * R, skirtY, attachZ + Math.sin(angle) * R);
 		}
 		gl.glEnd();
+
+		// --- Hemisphere canopy with red/white striped gores ---
+		// Disable face culling so both sides of canopy are visible
+		gl.glPushAttrib(GL2.GL_ENABLE_BIT);
+		gl.glDisable(GL2.GL_CULL_FACE);
+
+		for (int gore = 0; gore < gores; gore++) {
+			// Even gores: red, odd gores: white
+			if (gore % 2 == 0) {
+				gl.glColor3f(0.85f, 0.15f, 0.15f);
+			} else {
+				gl.glColor3f(0.96f, 0.96f, 0.98f);
+			}
+
+			double angle0 = (2.0 * Math.PI * gore) / gores;
+			double angle1 = (2.0 * Math.PI * (gore + 1)) / gores;
+
+			gl.glBegin(GL2.GL_TRIANGLE_STRIP);
+			for (int lat = 0; lat <= latBands; lat++) {
+				double phi = (Math.PI / 2.0) * lat / latBands;
+				double cosPhi = Math.cos(phi);
+				double sinPhi = Math.sin(phi);
+				double y = skirtY + R * sinPhi;
+
+				gl.glVertex3d(attachX + Math.cos(angle0) * R * cosPhi, y,
+						attachZ + Math.sin(angle0) * R * cosPhi);
+				gl.glVertex3d(attachX + Math.cos(angle1) * R * cosPhi, y,
+						attachZ + Math.sin(angle1) * R * cosPhi);
+			}
+			gl.glEnd();
+		}
+
+		gl.glPopAttrib();
 	}
 
 	private void drawGroundPlane(final GL2 gl) {
