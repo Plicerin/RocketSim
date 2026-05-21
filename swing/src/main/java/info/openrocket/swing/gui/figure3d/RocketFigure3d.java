@@ -21,6 +21,7 @@ import com.jogamp.opengl.GL;
 import com.jogamp.opengl.GL2;
 import com.jogamp.opengl.GLAutoDrawable;
 import com.jogamp.opengl.GLCapabilities;
+import com.jogamp.opengl.GLContext;
 import com.jogamp.opengl.GLEventListener;
 import com.jogamp.opengl.GLProfile;
 import com.jogamp.opengl.GLRunnable;
@@ -119,6 +120,8 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 	private double[] trailY = new double[0];
 	private double[] trailZ = new double[0];
 	private int visibleTrailSamples = 0;
+	private int smokeTrailSamples = 0;
+	private boolean smokeVisible = true;
 	private boolean recoverySystemVisible = false;
 	private double recoveryLineLength = 0.0;
 	private double recoveryCanopyRadius = 0.0;
@@ -629,6 +632,19 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		}
 		return cachedBounds;
 	}
+
+	public double getRocketHalfSpan() {
+		if (cachedBounds == null) {
+			cachedBounds = calculateBounds();
+		}
+		double halfSpan = Math.max(cachedBounds.span().getX(),
+				Math.max(cachedBounds.span().getY(), cachedBounds.span().getZ())) / 2.0;
+		if (halfSpan <= 0 || Double.isNaN(halfSpan) || Double.isInfinite(halfSpan)) {
+			halfSpan = 0.5;
+		}
+		return halfSpan;
+	}
+
 	
 	private void setupView(final GL2 gl, final GLU glu) {
 		gl.glLoadIdentity();
@@ -727,6 +743,11 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		final double nozzleY = modelOffsetY + yPitch;
 		final double nozzleZ = modelOffsetZ - xPitch * sinYaw;
 
+		// Draw smoke trail (billboard puffs) if visible
+		if (smokeVisible && smokeTrailSamples > 0) {
+			drawSmokeTrail(gl, smokeTrailSamples, nozzleX, nozzleY, nozzleZ, halfSpan);
+		}
+
 		gl.glColor3f(0.93f, 0.95f, 0.98f);
 		gl.glLineWidth(3.5f);
 		gl.glBegin(GL2.GL_LINE_STRIP);
@@ -739,6 +760,132 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		gl.glVertex3d(nozzleX, nozzleY, nozzleZ);
 		gl.glEnd();
 	}
+
+	private void computeSmokeBillboardBasis(final double[] right, final double[] up) {
+		double[] modelView = new double[16];
+		GL2 gl = (GL2) GLContext.getCurrentGL();
+		gl.glGetDoublev(GL2.GL_MODELVIEW_MATRIX, modelView, 0);
+
+		double viewX = -modelView[2];
+		double viewY = -modelView[6];
+		double viewZ = -modelView[10];
+		double viewLength = Math.sqrt(viewX * viewX + viewY * viewY + viewZ * viewZ);
+		if (viewLength < 1.0e-6) {
+			viewX = 0.0;
+			viewY = 0.0;
+			viewZ = -1.0;
+			viewLength = 1.0;
+		}
+		viewX /= viewLength;
+		viewY /= viewLength;
+		viewZ /= viewLength;
+
+		double worldUpX = 0.0;
+		double worldUpY = 1.0;
+		double worldUpZ = 0.0;
+		double rightX = viewY * worldUpZ - viewZ * worldUpY;
+		double rightY = viewZ * worldUpX - viewX * worldUpZ;
+		double rightZ = viewX * worldUpY - viewY * worldUpX;
+		double rightLength = Math.sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ);
+		if (rightLength < 1.0e-6) {
+			rightX = 1.0;
+			rightY = 0.0;
+			rightZ = 0.0;
+			rightLength = 1.0;
+		}
+		right[0] = rightX / rightLength;
+		right[1] = rightY / rightLength;
+		right[2] = rightZ / rightLength;
+
+		double upX = right[1] * viewZ - right[2] * viewY;
+		double upY = right[2] * viewX - right[0] * viewZ;
+		double upZ = right[0] * viewY - right[1] * viewX;
+		double upLength = Math.sqrt(upX * upX + upY * upY + upZ * upZ);
+		if (upLength < 1.0e-6) {
+			up[0] = 0.0;
+			up[1] = 1.0;
+			up[2] = 0.0;
+			return;
+		}
+		up[0] = upX / upLength;
+		up[1] = upY / upLength;
+		up[2] = upZ / upLength;
+	}
+
+	private void drawSmokePuff(final GL2 gl, final double centerX, final double centerY, final double centerZ,
+			final double radius, final double alpha, final double[] right, final double[] up,
+			final float red, final float green, final float blue) {
+		final int segments = 12;
+		gl.glBegin(GL2.GL_TRIANGLE_FAN);
+		gl.glColor4f(red, green, blue, (float) alpha);
+		gl.glVertex3d(centerX, centerY, centerZ);
+		for (int i = 0; i <= segments; i++) {
+			double angle = (Math.PI * 2.0 * i) / segments;
+			double offsetRight = Math.cos(angle) * radius;
+			double offsetUp = Math.sin(angle) * radius;
+			double x = centerX + right[0] * offsetRight + up[0] * offsetUp;
+			double y = centerY + right[1] * offsetRight + up[1] * offsetUp;
+			double z = centerZ + right[2] * offsetRight + up[2] * offsetUp;
+			gl.glColor4f(red * 0.75f, green * 0.75f, blue * 0.75f, 0.0f);
+			gl.glVertex3d(x, y, z);
+		}
+		gl.glEnd();
+	}
+
+	private void drawSmokeTrail(final GL2 gl, final int smokeCount,
+			final double nozzleX, final double nozzleY, final double nozzleZ,
+			final double halfSpan) {
+		final int maxPuffs = 16;
+		final int step = Math.max(1, smokeCount / maxPuffs);
+		final double[] right = new double[3];
+		final double[] up = new double[3];
+		computeSmokeBillboardBasis(right, up);
+		final double baseRadius = Math.max(0.025, halfSpan * 0.015);
+		final double maxRadius = Math.max(baseRadius * 1.8, halfSpan * 0.06);
+
+		gl.glPushAttrib(GL2.GL_ENABLE_BIT | GL2.GL_COLOR_BUFFER_BIT | GL2.GL_CURRENT_BIT | GL2.GL_DEPTH_BUFFER_BIT);
+		try {
+			gl.glEnable(GL.GL_BLEND);
+			gl.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA);
+			gl.glDisable(GLLightingFunc.GL_LIGHTING);
+			gl.glDisable(GL.GL_TEXTURE_2D);
+			gl.glDepthMask(false);
+
+			for (int i = 0; i < smokeCount; i += step) {
+				int index = Math.min(i, smokeCount - 1);
+				double t = smokeCount <= 1 ? 0.0 : (double) index / (double) (smokeCount - 1);
+				double x = trailX[index];
+				double y = Math.max(0.05, trailY[index]);
+				double z = trailZ[index];
+
+				double age = Math.pow(t, 0.85);
+				double radius = MathUtil.interpolate(baseRadius, maxRadius, age);
+				double alpha = MathUtil.interpolate(0.10, 0.02, age);
+				double rise = age * halfSpan * 0.04;
+
+				drawSmokePuff(gl, x, y + rise, z, radius, alpha,
+						right, up, 0.68f, 0.66f, 0.63f);
+			}
+
+			int lastIndex = Math.max(0, smokeCount - 1);
+			double lastX = trailX[lastIndex];
+			double lastY = Math.max(0.05, trailY[lastIndex]);
+			double lastZ = trailZ[lastIndex];
+			for (int i = 1; i <= 2; i++) {
+				double t = i / 2.0;
+				double x = MathUtil.interpolate(lastX, nozzleX, t);
+				double y = MathUtil.interpolate(lastY, nozzleY, t);
+				double z = MathUtil.interpolate(lastZ, nozzleZ, t);
+				double radius = MathUtil.interpolate(baseRadius * 0.6, baseRadius * 0.3, t);
+				double alpha = MathUtil.interpolate(0.10, 0.04, t);
+				drawSmokePuff(gl, x, y, z, radius, alpha, right, up, 0.60f, 0.58f, 0.55f);
+			}
+		} finally {
+			gl.glDepthMask(true);
+			gl.glPopAttrib();
+		}
+	}
+
 
 	private void drawRecoverySystem(final GL2 gl) {
 		if (!recoverySystemVisible || recoveryCanopyRadius <= 0.0 || recoveryLineLength <= 0.0) {
@@ -1173,6 +1320,24 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		internalRepaint();
 	}
 
+
+	public void setSmokeTrailSamples(final int count) {
+		int clamped = Math.max(0, Math.min(count, Math.min(trailX.length, Math.min(trailY.length, trailZ.length))));
+		if (smokeTrailSamples == clamped) {
+			return;
+		}
+		smokeTrailSamples = clamped;
+		internalRepaint();
+	}
+
+	public void setSmokeVisible(final boolean visible) {
+		if (smokeVisible == visible) {
+			return;
+		}
+		smokeVisible = visible;
+		internalRepaint();
+	}
+
 	/**
 	 * Apply all playback-visible state with a single repaint to avoid stutter from
 	 * multiple immediate GL redraws in one timer tick.
@@ -1222,6 +1387,7 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 
 		if (this.visibleTrailSamples != clampedTrailSamples) {
 			this.visibleTrailSamples = clampedTrailSamples;
+			this.smokeTrailSamples = clampedTrailSamples;
 			changed = true;
 		}
 
