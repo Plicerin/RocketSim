@@ -319,14 +319,14 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 			int lastX;
 			int lastY;
 			MouseEvent pressEvent;
-			
+
 			@Override
 			public void mousePressed(final MouseEvent e) {
 				lastX = e.getX();
 				lastY = e.getY();
 				pressEvent = e;
 			}
-			
+
 			@Override
 			public void mouseClicked(final MouseEvent e) {
 				// Store the click point in AWT (top-left origin) coordinates and convert to
@@ -337,18 +337,18 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 				pickEvent = e;
 				internalRepaint();
 			}
-			
+
 			@Override
 			public void mouseDragged(final MouseEvent e) {
 				//You can get a drag without a press while a modal dialog is shown
 				if (pressEvent == null)
 					return;
-				
+
 				int dx = lastX - e.getX();
 				int dy = lastY - e.getY();
 				lastX = e.getX();
 				lastY = e.getY();
-				
+
 				if (pressEvent.getButton() == MouseEvent.BUTTON1) {
 					if (Math.abs(dx) > Math.abs(dy)) {
 						setYaw(yaw - dx / 100.0);
@@ -367,6 +367,14 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		};
 		canvas.addMouseMotionListener(a);
 		canvas.addMouseListener(a);
+		canvas.addMouseWheelListener(e -> {
+			int rotation = e.getWheelRotation();
+			if (rotation == 0) return;
+			// Zoom: scroll up = closer (smaller distance), scroll down = farther
+			double factor = 1.0 + rotation * 0.1;
+			viewDistanceScale = MathUtil.clamp(viewDistanceScale * factor, 0.15, 5.0);
+			internalRepaint();
+		});
 	}
 	
 	
