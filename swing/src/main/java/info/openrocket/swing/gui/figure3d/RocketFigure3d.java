@@ -122,7 +122,12 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 	private int visibleTrailSamples = 0;
 	private int smokeTrailSamples = 0;
 	private boolean smokeVisible = true;
+	private boolean tracerVisible = true;
+	private boolean trailVisible = true;
 	private boolean recoverySystemVisible = false;
+	private boolean noseSeparated = false;
+	private double noseSeparationProgress = 0.0;
+	private double noseSeparationDistance = 0.0;
 	private double recoveryLineLength = 0.0;
 	private double recoveryCanopyRadius = 0.0;
 	
@@ -725,23 +730,12 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 			return;
 		}
 
-		// Compute current nozzle world position so the trail connects to the nozzle,
-		// not to the model's geometric center (which is at modelOffset and is ~span/2
-		// ahead of the nozzle in the direction of travel).
-		final BoundingBox tb = calculateBounds();
-		final double halfSpan = (tb != null) ? tb.span().getX() / 2.0 : 0.0;
-		// Nozzle is at (+halfSpan, 0, 0) in centred model space. Apply pitch then yaw.
-		// R_pitch (around Z by modelPitch): (halfSpan, 0) -> (halfSpan*cos, halfSpan*sin)
-		// R_yaw   (around Y by modelYaw):   x_yaw = x_p*cos(yaw), z_yaw = -x_p*sin(yaw)
-		final double cosPitch = Math.cos(modelPitch);
-		final double sinPitch = Math.sin(modelPitch);
-		final double cosYaw   = Math.cos(modelYaw);
-		final double sinYaw   = Math.sin(modelYaw);
-		final double xPitch = halfSpan * cosPitch;
-		final double yPitch = halfSpan * sinPitch;
-		final double nozzleX = modelOffsetX + xPitch * cosYaw;
-		final double nozzleY = modelOffsetY + yPitch;
-		final double nozzleZ = modelOffsetZ - xPitch * sinYaw;
+		// Compute current nozzle world position
+		final double[] nozzlePos = getNozzleWorldPosition(gl);
+		final double nozzleX = nozzlePos[0];
+		final double nozzleY = nozzlePos[1];
+		final double nozzleZ = nozzlePos[2];
+		final double halfSpan = getRocketHalfSpan();
 
 		// Draw smoke trail (billboard puffs) if visible
 		if (smokeVisible && smokeTrailSamples > 0) {
@@ -759,6 +753,30 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		gl.glVertex3d(modelOffsetX, modelOffsetY, modelOffsetZ);
 		gl.glVertex3d(nozzleX, nozzleY, nozzleZ);
 		gl.glEnd();
+	}
+
+	private double[] getNozzleWorldPosition(final GL2 gl) {
+		return getRocketEndWorldPosition(gl, +1.0);
+	}
+
+	private double[] getNoseWorldPosition(final GL2 gl) {
+		return getRocketEndWorldPosition(gl, -1.0);
+	}
+
+	private double[] getRocketEndWorldPosition(final GL2 gl, final double direction) {
+		final BoundingBox tb = calculateBounds();
+		final double halfSpan = (tb != null) ? tb.span().getX() / 2.0 : 0.0;
+		final double cosPitch = Math.cos(modelPitch);
+		final double sinPitch = Math.sin(modelPitch);
+		final double cosYaw = Math.cos(modelYaw);
+		final double sinYaw = Math.sin(modelYaw);
+		final double xLocal = halfSpan * cosPitch * direction;
+		final double yLocal = halfSpan * sinPitch * direction;
+		return new double[] {
+			modelOffsetX + xLocal * cosYaw,
+			modelOffsetY + yLocal,
+			modelOffsetZ - xLocal * sinYaw
+		};
 	}
 
 	private void computeSmokeBillboardBasis(final double[] right, final double[] up) {
@@ -900,10 +918,11 @@ public class RocketFigure3d extends JPanel implements GLEventListener {
 		final int gores = 8;
 		final int latBands = 10;
 
-		// Attachment point (nose)
-		final double attachX = modelOffsetX;
-		final double attachY = modelOffsetY;
-		final double attachZ = modelOffsetZ;
+		// Attachment point (nose, accounts for pitch/yaw)
+		final double[] nose = getNoseWorldPosition(gl);
+		final double attachX = nose[0];
+		final double attachY = nose[1];
+		final double attachZ = nose[2];
 
 		// Skirt ring (bottom of canopy)
 		final double skirtY = attachY + recoveryLineLength;
